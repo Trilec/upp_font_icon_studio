@@ -1,0 +1,18 @@
+description "Font Icon Studio Pro — main app scaffold\377";
+
+uses
+	Core,
+	CtrlLib,
+	upp_font_icon_studio/IconGalleryCtrl;
+
+include
+	.,
+	/include,
+	/src;
+
+file
+	main.cpp;
+
+mainconfig
+	"" = "GUI";
+

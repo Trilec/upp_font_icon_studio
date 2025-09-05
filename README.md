@@ -11,15 +11,16 @@ A modular U++ desktop app for composing **font-based icons** from two layers (A/
 ---
 ## Repo structure (Rough)
 
-.
-├─ README.md
-├─ FontIconStudio/
-│ ├─ upp_font_icon_studio.upp
-│ └─ main.cpp
-└─ IconGallery/ ← create next (separate package)
-├─ IconGallery.upp
-├─ LibraryCtrl.h/.cpp ← GalleryCtrl lives here
-└─ gallery_demo.cpp ← tiny harness for zoom/virtualization tests
+LICENSE
+README.md
+main.cpp
+upp_font_icon_studio.upp
+IconGalleryCtrl/
+  IconGalleryCtrl.cpp
+  IconGalleryCtrl.h
+  IconGalleryCtrl.upp
+include/
+src/
 
 ---
 
