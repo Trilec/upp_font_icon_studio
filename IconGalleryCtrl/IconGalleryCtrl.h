@@ -1,7 +1,5 @@
 #pragma once
 #include <CtrlLib/CtrlLib.h>
-#include <Painter/Painter.h> // BufferPainter
-
 using namespace Upp;
 
 // ---------- Data ----------
@@ -41,11 +39,11 @@ public:
     void  AddDummy(const String& name);
 
     // Attach / clear real image
-    bool  SetThumbFromFile(int index, const String& filepath); // returns true if loaded
-    void  SetThumbImage(int index, const Image& img);          // set from RAM
-    void  ClearThumbImage(int index);                          // back to status glyphs
+    bool  SetThumbFromFile(int index, const String& filepath);
+    void  SetThumbImage(int index, const Image& img);
+    void  ClearThumbImage(int index);
 
-    // Quick status switches
+    // Status
     void  SetThumbStatus(int index, ThumbStatus s);
 
     // Selection
@@ -72,9 +70,6 @@ public:
     static const Image& MissingGlyph(int tile = 32);
 
 private:
-    // Scroll frame
-    ScrollBars sb; // AddFrame(sb); we only use vertical, AutoHide
-
     Vector<IconGalleryItem> items;
 
     // Layout / zoom
@@ -83,7 +78,15 @@ private:
     int         cols   = 1;
     int         pad    = 10;
     int         labelH = 16;
+
+    // Manual scrolling state (vertical)
+    int         scroll_y  = 0;
     int         content_h = 0;
+    ScrollBars  sb;                // <— U++ ScrollBars frame
+
+    // Selection helpers
+    int         anchor_index = -1; // last “caret” for shift-range
+    int         hover_index  = -1; // current hover tile or -1
 
     // Visual toggles
     bool        show_selection_border = true;
@@ -93,23 +96,36 @@ private:
     // Helpers
     void   Reflow();
     Rect   IndexRectNoScroll(int i) const;
-    Rect   IndexRectView(int i) const; // position in viewport (y offset by sb)
+    Rect   IndexRect(int i) const;
     void   EnsureThumbs(IconGalleryItem& it);
     Color  AutoColorFromText(const String& s) const;
 
     // Drawing helpers
-    static void StrokeRect(Draw& w, const Rect& r, int t, const Color& c);
+    void   StrokeRect(Draw& w, const Rect& r, int t, const Color& c) const;
     void   DrawPlaceholderGlyph(BufferPainter& p, int tile, bool gray) const;
-    void   DrawMissingGlyph    (BufferPainter& p, int tile, bool gray) const;
+    void   DrawMissingGlyph(BufferPainter& p, int tile, bool gray) const;
 
     static Image MakePlaceholderGlyph(int tile, bool gray);
-    static Image MakeMissingGlyph    (int tile, bool gray);
+    static Image MakeMissingGlyph(int tile, bool gray);
+
+    // Selection helpers
+    void   SelectRange(int a, int b, bool additive);
+
+    // Context menu
+    void   ShowContextMenu(Point p);
+    void   DoSelectAll();
+    void   DoInvertSelection();
+    void   DoClearSelection();
+    void   DoRemoveSelected();
+    void   DoRemoveAll();
 
     // Ctrl overrides
-    void   Layout() override;
+    void   Layout() override { Reflow(); Refresh(); }
     void   Paint(Draw& w) override;
     void   LeftDown(Point p, dword flags) override;
     void   LeftDouble(Point p, dword flags) override;
+    void   RightDown(Point p, dword flags) override;
+    void   MouseMove(Point p, dword flags) override;
     bool   Key(dword key, int) override;
     void   MouseWheel(Point p, int zdelta, dword keyflags) override;
 };

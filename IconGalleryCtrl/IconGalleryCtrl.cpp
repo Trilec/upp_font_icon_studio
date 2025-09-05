@@ -2,16 +2,23 @@
 
 static inline int ClampInt(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
-/*================ Construction ================*/
-IconGalleryCtrl::IconGalleryCtrl() {
+// ---------------- Construction ----------------
+IconGalleryCtrl::IconGalleryCtrl()
+{
     BackPaint();
+
+    // Add our scrollbars as a frame and wire the callback (no args)
     AddFrame(sb);
-    sb.AutoHide(true).NoBox();            // clean look; shows only when needed
-    sb.SetLine(20, 80);                   // wheel/arrow step (x,y). y is roughly one label line
-    sb.WhenScroll = [=] { Refresh(); };   // repaint on scroll
+    sb.AutoHide();
+    sb.NoBox();
+    sb.SetLine(20); // wheel step
+    sb.WhenScroll = [=] {
+        scroll_y = sb.GetY();
+        Refresh();
+    };
 }
 
-/*================ Item add ====================*/
+// ---------------- Item add ----------------
 int IconGalleryCtrl::Add(const String& name, const Image& img, Color tint) {
     IconGalleryItem it;
     it.name = name;
@@ -29,14 +36,11 @@ int IconGalleryCtrl::Add(const String& name, const Image& img, Color tint) {
 
 void IconGalleryCtrl::AddDummy(const String& name) { Add(name); }
 
-/*============= Attach / clear real image =============*/
+// ---------------- Attach / clear real image ----------------
 bool IconGalleryCtrl::SetThumbFromFile(int index, const String& filepath) {
     if(index < 0 || index >= items.GetCount()) return false;
     Image m = StreamRaster::LoadFileAny(filepath);
-    if(IsNull(m)) {
-        SetThumbStatus(index, ThumbStatus::Missing);
-        return false;
-    }
+    if(IsNull(m)) { SetThumbStatus(index, ThumbStatus::Missing); return false; }
     SetThumbImage(index, m);
     return true;
 }
@@ -44,9 +48,9 @@ bool IconGalleryCtrl::SetThumbFromFile(int index, const String& filepath) {
 void IconGalleryCtrl::SetThumbImage(int index, const Image& img) {
     if(index < 0 || index >= items.GetCount()) return;
     auto& it = items[index];
-    it.src = img;                       // keep full-res copy
-    it.status = ThumbStatus::Auto;      // src will be used at EnsureThumbs
-    it.thumb_normal = Image();          // invalidate caches
+    it.src = img;
+    it.status = ThumbStatus::Auto;
+    it.thumb_normal = Image();
     it.thumb_gray   = Image();
     Refresh();
 }
@@ -54,13 +58,13 @@ void IconGalleryCtrl::SetThumbImage(int index, const Image& img) {
 void IconGalleryCtrl::ClearThumbImage(int index) {
     if(index < 0 || index >= items.GetCount()) return;
     auto& it = items[index];
-    it.src = Image();                   // drop source
+    it.src = Image();
     it.thumb_normal = Image();
     it.thumb_gray   = Image();
     Refresh();
 }
 
-/*================ Status toggle ====================*/
+// ---------------- Status toggle ----------------
 void IconGalleryCtrl::SetThumbStatus(int index, ThumbStatus s) {
     if(index < 0 || index >= items.GetCount()) return;
     auto& it = items[index];
@@ -71,7 +75,7 @@ void IconGalleryCtrl::SetThumbStatus(int index, ThumbStatus s) {
     Refresh();
 }
 
-/*================ Selection / filter ================*/
+// ---------------- Selection helpers ----------------
 Vector<int> IconGalleryCtrl::GetSelection() const {
     Vector<int> out;
     for(int i = 0; i < items.GetCount(); ++i)
@@ -79,6 +83,14 @@ Vector<int> IconGalleryCtrl::GetSelection() const {
     return out;
 }
 
+void IconGalleryCtrl::SelectRange(int a, int b, bool additive) {
+    if(a > b) Swap(a, b);
+    if(!additive) for(auto& it : items) it.selected = false;
+    for(int i = a; i <= b && i < items.GetCount(); ++i)
+        items[i].selected = true;
+}
+
+// ---------------- Filtering ----------------
 void IconGalleryCtrl::SetFiltered(int index, bool filtered_out) {
     if(index < 0 || index >= items.GetCount()) return;
     items[index].filtered_out = filtered_out;
@@ -90,7 +102,7 @@ void IconGalleryCtrl::ClearFilterFlags() {
     Refresh();
 }
 
-/*================ Zoom ====================*/
+// ---------------- Zoom ----------------
 void IconGalleryCtrl::SetZoomIndex(int zi) {
     zi = ClampInt(zi, 0, zoom_steps.GetCount() - 1);
     if(zi == zoom_i) return;
@@ -100,7 +112,7 @@ void IconGalleryCtrl::SetZoomIndex(int zi) {
     Reflow(); Refresh();
 }
 
-/*================ Layout / flow ====================*/
+// ---------------- Layout / Scrollbars sync ----------------
 void IconGalleryCtrl::Reflow() {
     Size sz  = GetSize();
     int tile = zoom_steps[zoom_i];
@@ -112,9 +124,11 @@ void IconGalleryCtrl::Reflow() {
     int rows = items.GetCount() ? ((items.GetCount() - 1) / cols + 1) : 0;
     content_h = pad + rows * (boxH + pad);
 
-    // Tell the scrollbars what the viewport and content sizes are.
-    sb.SetPage(sz);                       // visible area
-    sb.SetTotal(Size(sz.cx, content_h));  // only vertical scrolling for now
+    int max_scroll = max(0, content_h - sz.cy);
+    scroll_y = ClampInt(scroll_y, 0, max_scroll);
+
+    // Tell ScrollBars: pos/page/total
+    sb.Set(Point(0, scroll_y), sz, Size(sz.cx, content_h));
 }
 
 Rect IconGalleryCtrl::IndexRectNoScroll(int i) const {
@@ -127,25 +141,23 @@ Rect IconGalleryCtrl::IndexRectNoScroll(int i) const {
     return RectC(x, y, boxW, boxH);
 }
 
-Rect IconGalleryCtrl::IndexRectView(int i) const {
+Rect IconGalleryCtrl::IndexRect(int i) const {
     Rect raw = IndexRectNoScroll(i);
-    return raw.Offseted(0, -sb.GetY());  // bring into viewport space
+    return RectC(raw.left, raw.top - scroll_y, raw.Width(), raw.Height());
 }
 
-/*================ Glyph builders ====================*/
+// ---------------- Glyph builders ----------------
 Image IconGalleryCtrl::MakePlaceholderGlyph(int tile, bool gray) {
     ImageBuffer ib(tile, tile);
     RGBA* p = ib.Begin();
     for(int i = 0; i < tile * tile; ++i, ++p) { p->r = p->g = p->b = 0; p->a = 255; }
     ib.End();
     BufferPainter bp(ib);
-    // checker
     Color a = Color(24,28,34), b = Color(18,22,27);
     int step = 8;
     for(int y = 0; y < tile; y += step)
         for(int x = 0; x < tile; x += step)
             bp.Rectangle(x, y, step, step).Fill(((x + y) / step) % 2 ? a : b);
-    // dashed box + plus
     IconGalleryCtrl().DrawPlaceholderGlyph(bp, tile, gray);
     return ib;
 }
@@ -156,13 +168,11 @@ Image IconGalleryCtrl::MakeMissingGlyph(int tile, bool gray) {
     for(int i = 0; i < tile * tile; ++i, ++p) { p->r = p->g = p->b = 0; p->a = 255; }
     ib.End();
     BufferPainter bp(ib);
-    // checker
     Color a = Color(24,28,34), b = Color(18,22,27);
     int step = 8;
     for(int y = 0; y < tile; y += step)
         for(int x = 0; x < tile; x += step)
             bp.Rectangle(x, y, step, step).Fill(((x + y) / step) % 2 ? a : b);
-    // warning glyph
     IconGalleryCtrl().DrawMissingGlyph(bp, tile, gray);
     return ib;
 }
@@ -180,7 +190,7 @@ const Image& IconGalleryCtrl::MissingGlyph(int tile) {
     return cache[i];
 }
 
-/*================ Simple primitives ====================*/
+// Internal primitive draws
 void IconGalleryCtrl::DrawPlaceholderGlyph(BufferPainter& p, int tile, bool gray) const {
     Color edge = gray ? SColorDisabled() : SColorText();
     int   m    = max(2, tile / 10);
@@ -190,13 +200,13 @@ void IconGalleryCtrl::DrawPlaceholderGlyph(BufferPainter& p, int tile, bool gray
 
     for(int x = m; x < tile - m; x += dash + gap) {
         int w = min(dash, tile - m - x);
-        p.Rectangle(x, m, w, t).Fill(edge);                       // top
-        p.Rectangle(x, tile - m - t, w, t).Fill(edge);            // bottom
+        p.Rectangle(x, m, w, t).Fill(edge);
+        p.Rectangle(x, tile - m - t, w, t).Fill(edge);
     }
     for(int y = m; y < tile - m; y += dash + gap) {
         int h = min(dash, tile - m - y);
-        p.Rectangle(m, y, t, h).Fill(edge);                       // left
-        p.Rectangle(tile - m - t, y, t, h).Fill(edge);            // right
+        p.Rectangle(m, y, t, h).Fill(edge);
+        p.Rectangle(tile - m - t, y, t, h).Fill(edge);
     }
     int cx = tile / 2, cy = tile / 2, arm = (tile - 2*m) / 3;
     p.Rectangle(cx - t/2, cy - arm, t, 2*arm).Fill(edge);
@@ -208,13 +218,11 @@ void IconGalleryCtrl::DrawMissingGlyph(BufferPainter& p, int tile, bool gray) co
     const int   m    = max(2, tile / 10);
     const int   t    = max(2, tile / 14);
 
-    // frame (four sides)
     p.Rectangle(m, m,                tile - 2*m, t          ).Fill(warn);
     p.Rectangle(m, tile - m - t,     tile - 2*m, t          ).Fill(warn);
     p.Rectangle(m, m,                t,          tile - 2*m ).Fill(warn);
     p.Rectangle(tile - m - t, m,     t,          tile - 2*m ).Fill(warn);
 
-    // exclamation mark
     const int cx   = tile / 2;
     const int barh = (tile - 2*m) * 2 / 3;
     const int dot  = max(2, t);
@@ -230,15 +238,15 @@ void IconGalleryCtrl::DrawMissingGlyph(BufferPainter& p, int tile, bool gray) co
                 dot).Fill(warn);
 }
 
-/*================ Ensure thumbs at current zoom ====================*/
+// ---------------- Ensure thumbs at current zoom ----------------
 void IconGalleryCtrl::EnsureThumbs(IconGalleryItem& it) {
-    const int tile = zoom_steps[zoom_i];
-    const bool need_normal = it.thumb_normal.IsEmpty()
-                          || it.thumb_normal.GetWidth()  != tile
-                          || it.thumb_normal.GetHeight() != tile;
-    const bool need_gray   = it.thumb_gray.IsEmpty()
-                          || it.thumb_gray.GetWidth()  != tile
-                          || it.thumb_gray.GetHeight() != tile;
+    int tile = zoom_steps[zoom_i];
+    bool need_normal = it.thumb_normal.IsEmpty()
+                    || it.thumb_normal.GetWidth() != tile
+                    || it.thumb_normal.GetHeight() != tile;
+    bool need_gray   = it.thumb_gray.IsEmpty()
+                    || it.thumb_gray.GetWidth() != tile
+                    || it.thumb_gray.GetHeight() != tile;
     if(!need_normal && !need_gray) return;
 
     if(!it.src.IsEmpty()) {
@@ -308,7 +316,7 @@ void IconGalleryCtrl::EnsureThumbs(IconGalleryItem& it) {
     }
 }
 
-/*================ Paint & input ====================*/
+// ---------------- Paint & input ----------------
 Color IconGalleryCtrl::AutoColorFromText(const String& s) const {
     unsigned acc = 0;
     for(byte ch : s) acc = acc * 131 + ch;
@@ -318,17 +326,12 @@ Color IconGalleryCtrl::AutoColorFromText(const String& s) const {
     return HsvColorf(h, sN, vN);
 }
 
-void IconGalleryCtrl::StrokeRect(Draw& w, const Rect& r, int t, const Color& c) {
+void IconGalleryCtrl::StrokeRect(Draw& w, const Rect& r, int t, const Color& c) const {
     if(t <= 0) return;
     w.DrawRect(RectC(r.left, r.top, r.Width(), t), c);
     w.DrawRect(RectC(r.left, r.bottom - t, r.Width(), t), c);
     w.DrawRect(RectC(r.left, r.top, t, r.Height()), c);
     w.DrawRect(RectC(r.right - t, r.top, t, r.Height()), c);
-}
-
-void IconGalleryCtrl::Layout() {
-    Reflow();
-    Refresh();
 }
 
 void IconGalleryCtrl::Paint(Draw& w) {
@@ -340,31 +343,33 @@ void IconGalleryCtrl::Paint(Draw& w) {
         return;
     }
 
-    const int tile = zoom_steps[zoom_i];
-    const int boxH = tile + labelH + 2*pad;
+    Rect vr(0, 0, sz.cx, sz.cy);
+    int tile = zoom_steps[zoom_i];
+    int boxH = tile + labelH + 2*pad;
 
-    const int view_top    = sb.GetY();
-    const int view_bottom = view_top + sz.cy;
-
-    const int firstRow = max(0, (view_top   - pad) / (boxH + pad));
-    const int lastRow  =       (view_bottom - pad) / (boxH + pad) + 1;
+    int firstRow = max(0, (scroll_y - pad) / (boxH + pad));
+    int lastRow  = (scroll_y + sz.cy - pad) / (boxH + pad) + 1;
 
     for(int r = firstRow; r <= lastRow; ++r) {
         for(int c = 0; c < cols; ++c) {
-            const int i = r * cols + c;
+            int i = r * cols + c;
             if(i >= items.GetCount()) break;
 
-            const Rect box = IndexRectView(i);
-            const Rect vr(0, 0, sz.cx, sz.cy);
+            Rect box = IndexRect(i);
             if(!box.Intersects(vr)) continue;
 
             auto& it = items[i];
             EnsureThumbs(it);
 
-            // background panel
+            // base panel
             w.DrawRect(box, Blend(SColorFace(), SColorPaper(), 200));
 
-            // thin "filtered-in" halo (under selection)
+            // hover tint (subtle)
+            if(i == hover_index && !it.selected) {
+                Color tint = Blend(SColorHighlight(), SColorFace(), 220);
+                w.DrawRect(box, tint);
+            }
+
             if(show_filter_border && !it.filtered_out)
                 StrokeRect(w, box, 1, SColorPaper());
 
@@ -372,12 +377,10 @@ void IconGalleryCtrl::Paint(Draw& w) {
             const Image& thumb = want_gray && !it.thumb_gray.IsEmpty()
                                ? it.thumb_gray : it.thumb_normal;
 
-            // image centered
             Size ts = thumb.GetSize();
             Point p = box.TopLeft() + Point((box.GetWidth() - ts.cx) / 2, pad);
             w.DrawImage(p.x, p.y, thumb);
 
-            // label area
             Rect lab = RectC(box.left, box.bottom - labelH - pad, box.GetWidth(), labelH + pad);
             w.DrawRect(lab, SColorLtFace());
             String caption = it.name;
@@ -386,7 +389,6 @@ void IconGalleryCtrl::Paint(Draw& w) {
             w.DrawText(lab.left + 6, lab.top + (labelH - StdFont().GetHeight()) / 2,
                        caption, StdFont(), textc);
 
-            // selection ring
             if(show_selection_border && it.selected)
                 StrokeRect(w, box, 2, SColorHighlight());
         }
@@ -394,17 +396,18 @@ void IconGalleryCtrl::Paint(Draw& w) {
 }
 
 void IconGalleryCtrl::LeftDown(Point p, dword flags) {
-    for(int i = 0; i < items.GetCount(); ++i) if(IndexRectView(i).Contains(p)) {
-        bool add = (flags & K_CTRL) || (flags & K_SHIFT);
-        if(!add) for(auto& it : items) it.selected = false;
-        items[i].selected = add ? !items[i].selected : true;
+    SetFocus();
+    bool ctrl  = (flags & K_CTRL) != 0;
+    bool shift = (flags & K_SHIFT) != 0;
 
-        // ensure the clicked tile is visible
-        Rect raw = IndexRectNoScroll(i);
-        const int tile = zoom_steps[zoom_i];
-        const int boxH = tile + labelH + 2*pad;
-        sb.ScrollIntoY(raw.top, boxH);
-
+    for(int i = 0; i < items.GetCount(); ++i) if(IndexRect(i).Contains(p)) {
+        if(shift && anchor_index >= 0) {
+            SelectRange(anchor_index, i, ctrl); // ctrl keeps existing, otherwise replace
+        } else {
+            if(!ctrl) for(auto& it : items) it.selected = false;
+            items[i].selected = ctrl ? !items[i].selected : true;
+            anchor_index = i; // update anchor for future shift
+        }
         Refresh();
         if(WhenSelection) WhenSelection();
         return;
@@ -413,12 +416,27 @@ void IconGalleryCtrl::LeftDown(Point p, dword flags) {
 
 void IconGalleryCtrl::LeftDouble(Point p, dword) {
     for(int i = 0; i < items.GetCount(); ++i)
-        if(IndexRectView(i).Contains(p) && WhenActivate) { WhenActivate(items[i]); return; }
+        if(IndexRect(i).Contains(p) && WhenActivate) { WhenActivate(items[i]); return; }
+}
+
+void IconGalleryCtrl::RightDown(Point p, dword) {
+    ShowContextMenu(p);
+}
+
+void IconGalleryCtrl::MouseMove(Point p, dword) {
+    int new_hover = -1;
+    for(int i = 0; i < items.GetCount(); ++i)
+        if(IndexRect(i).Contains(p)) { new_hover = i; break; }
+    if(new_hover != hover_index) { hover_index = new_hover; Refresh(); }
 }
 
 bool IconGalleryCtrl::Key(dword key, int) {
-    // Let ScrollBars process navigation keys
-    if(sb.Key(key)) { Refresh(); return true; }
+    // Let ScrollBars handle page/home/end/arrows etc.
+    if(sb.Key(key)) {
+        scroll_y = sb.GetY();
+        Refresh();
+        return true;
+    }
 
     if(key == K_ENTER) {
         Vector<int> sel = GetSelection();
@@ -428,9 +446,46 @@ bool IconGalleryCtrl::Key(dword key, int) {
 }
 
 void IconGalleryCtrl::MouseWheel(Point, int zdelta, dword keyflags) {
-    if(keyflags & K_CTRL) {
-        SetZoomIndex(zoom_i + (zdelta > 0 ? +1 : -1));
-        return;
-    }
-    sb.WheelY(zdelta); // will trigger WhenScroll => Refresh()
+    if(keyflags & K_CTRL) { SetZoomIndex(zoom_i + (zdelta > 0 ? +1 : -1)); return; }
+    sb.WheelY(zdelta);
+    scroll_y = sb.GetY();
+    Refresh();
+}
+
+// ---------------- Context menu ----------------
+void IconGalleryCtrl::ShowContextMenu(Point p) {
+    MenuBar::Execute([&](Bar& bar){
+        bar.Add("Select all",      [&]{ DoSelectAll();      });
+        bar.Add("Invert selection",[&]{ DoInvertSelection();});
+        bar.Add("Clear selection", [&]{ DoClearSelection(); });
+        bar.Separator();
+        bar.Add("Remove selected", [&]{ DoRemoveSelected(); });
+        bar.Add("Remove all",      [&]{ DoRemoveAll();      });
+    });
+}
+
+void IconGalleryCtrl::DoSelectAll() {
+    for(auto& it : items) it.selected = true;
+    Refresh(); if(WhenSelection) WhenSelection();
+}
+void IconGalleryCtrl::DoInvertSelection() {
+    for(auto& it : items) it.selected = !it.selected;
+    Refresh(); if(WhenSelection) WhenSelection();
+}
+void IconGalleryCtrl::DoClearSelection() {
+    for(auto& it : items) it.selected = false;
+    Refresh(); if(WhenSelection) WhenSelection();
+}
+void IconGalleryCtrl::DoRemoveSelected() {
+    Vector<IconGalleryItem> keep;
+    keep.Reserve(items.GetCount());
+    for(auto& it : items) if(!it.selected) keep.Add(pick(it));
+    items = pick(keep);
+    anchor_index = hover_index = -1;
+    Reflow(); Refresh(); if(WhenSelection) WhenSelection();
+}
+void IconGalleryCtrl::DoRemoveAll() {
+    items.Clear();
+    anchor_index = hover_index = -1;
+    Reflow(); Refresh(); if(WhenSelection) WhenSelection();
 }
